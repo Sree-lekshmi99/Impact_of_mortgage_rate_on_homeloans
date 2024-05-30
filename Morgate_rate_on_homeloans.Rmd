@@ -1,0 +1,657 @@
+---
+title: "Time Series - Midterm Project"
+subtitle: "Residential Real Estate Financing Patterns: Insights from Mortgage Averages"
+author: "By - Sree Lekshmi Prasannan <br> Jaskirat Singh"
+format:
+  revealjs
+    #incremental: true  
+editor: source
+toc: true
+toc-depth: 1
+slide-number: true
+smaller: false
+scrollable: true 
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r, include=FALSE}
+library(forecast)
+library(fpp3)
+library(tidyverse)
+library(tsbox)
+library(zoo)
+library(seasonal)
+library(astsa)
+library(patchwork)
+library(tseries)
+library(fredr)
+library(quarto)
+library(xts)
+library(dplyr)
+library(ggplot2)
+library(vars)
+
+```
+
+
+```{r setup, include=FALSE}
+# Set up chunk for all slides
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  cache = TRUE,
+  dev.args = list(pointsize = 11)
+)
+```
+
+
+# Dataset
+
+## Time Series used in the project - 
+- Real Estate Loans: "Residential Real Estate Loans, All Commercial Banks" from FRED which represents the total amount of residential real estate loans issued by all commercial banks in the United States.
+- The covariate series used is "30-Year Fixed Rate Mortgage Average" which represents the average interest rate on 30-year fixed-rate mortgages in the United States
+
+## Relevance - 
+- The average interest rate on 30-year fixed-rate mortgages is a crucial factor influencing the affordability of home purchases and the demand for mortgage financing.
+- By analyzing trends in the fixed-rate mortgage average, we can gain insights into shifts in mortgage interest rates, which in turn can influence housing market activity, including home sales, and overall residential real estate lending.
+
+
+## Basic statistics about datasets - 
+
+```{r, echo=FALSE}
+#| output-location: slide
+# Reading Real Estate Loans data and the covariate series Mortgage Rate
+fredr_set_key("4e2b405e7ea0d612c659d24c185134a1")
+
+real_estate_loans <- fredr(series_id = "RREACBW027NBOG")
+mortgage_rate <- fredr(series_id = "MORTGAGE30US")
+
+# Taking date and value column from booth the series
+real_estate_loans <- real_estate_loans[c("date", "value")]
+mortgage_rate <- mortgage_rate[c("date", "value")]
+
+
+# Converting date column in both the series to date type
+real_estate_loans$date <- as.Date(real_estate_loans$date)
+mortgage_rate$date <- as.Date(mortgage_rate$date)
+
+cat("- Both time series are on weekly basis and not seasonally adjusted.\n")
+cat("- Total number of rows in real estate loans dataset:", nrow(real_estate_loans), "\n")
+cat("- Total number of rows in mortgage rate dataset:", nrow(mortgage_rate), "\n\n")
+
+# Basic summary statistics
+cat("- Summary of real estate loans dataset:", "\n")
+summary(real_estate_loans)
+
+cat("- Summary of mortgage rate dataset:", "\n")
+summary(mortgage_rate)
+cat("\n\n")
+
+
+
+```
+
+
+
+# Data Preparation
+
+## Making start and end dates compatible - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+#ts_real_estate_loans <- ts(real_estate_loans)
+#ts_mortgage_rate <- ts(mortgage_rate)
+
+# Get the start date
+loans_start_date <- min(real_estate_loans$date)
+mortgage_start_date <- min(mortgage_rate$date)
+
+# Get the end date
+loans_end_date <- max(real_estate_loans$date)
+mortgage_end_date <- max(mortgage_rate$date)
+
+# Print the start and end dates
+
+print(paste("Start date of real estate loans series:", loans_start_date))
+print(paste("Start date of mortgage rate series:", mortgage_start_date))
+print(paste("End date of real estate loans series:", loans_end_date))
+print(paste("End date of mortgage rate series:", mortgage_end_date))
+```
+
+<br> </br>
+```{r, echo=FALSE}
+#| output-location: slide
+# Subtracting one day from mortgage rate dataset to make it similar to real estate loans dataset
+mortgage_rate$date <- mortgage_rate$date - 1
+
+# Start date of real estate loans dataset is "2004-06-02", therefore, filtering out data before this date from mortgage rate series and end date should be "2024-02-28"
+filtered_mortgae_rate <- mortgage_rate %>%
+  filter(date >=as.Date("2004-06-02") & date <= as.Date("2024-02-28"))
+
+filtered_real_estate_loans <- real_estate_loans %>%
+  filter(date >=as.Date("2004-06-02") & date <= as.Date("2024-02-28"))
+
+
+# Get the start date
+loans_start_date <- min(filtered_real_estate_loans$date)
+mortgage_start_date <- min(filtered_mortgae_rate$date)
+
+# Get the end date
+loans_end_date <- max(filtered_real_estate_loans$date)
+mortgage_end_date <- max(filtered_mortgae_rate$date)
+
+cat("Start and end date of both the series after filtering the datasets - ")
+print(paste("Start date of real estate loans series:", loans_start_date))
+print(paste("Start date of mortgage rate series:", mortgage_start_date))
+print(paste("End date of real estate loans series:", loans_end_date))
+print(paste("End date of mortgage rate series:", mortgage_end_date))
+
+```
+
+## Number of observations after filteration - 
+```{r, echo=FALSE}
+#| output-location: slide
+cat("- Total number of rows in real estate loans:", nrow(filtered_real_estate_loans), "\n")
+cat("- Total number of rows in mortgage rate:", nrow(filtered_mortgae_rate), "\n\n")
+```
+
+
+
+# Data Analysis
+
+## Visualizing the datasets - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+# Plotting Real Estate Loans time-series data
+ggplot(real_estate_loans, aes(x = date, y = value)) +
+  geom_line() +
+  labs(title = "Time Series Plot of Real Estate Loans series",
+       x = "Date (Year)",
+       y = "value")
+
+
+# Plotting Mortgage rate time-series data
+ggplot(mortgage_rate, aes(x = date, y = value)) +
+  geom_line() +
+  labs(title = "Time Series Plot of Mortgage rate series",
+       x = "Date (Year)",
+       y = "value")
+```
+
+## Correlation coefficient - 
+```{r, echo=FALSE}
+#| output-location: slide
+realEstateLoan_mortgage_corr <- cor(filtered_real_estate_loans$value, filtered_mortgae_rate$value)
+cat("Correlation between Real Estate Loans and Mortgage rate series: ", realEstateLoan_mortgage_corr, "\n")
+
+```
+
+## ACF and PACF of Real Estate loans - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+# Plotting ACF and PACF for filtered real estate loans series
+acf(filtered_real_estate_loans$value)
+pacf(filtered_real_estate_loans$value)
+```
+
+## ACF and PACF of Mortgage Rate - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+# Plotting ACF and PACF for filtered mortgage rate series
+acf(filtered_mortgae_rate$value)
+pacf(filtered_mortgae_rate$value)
+```
+
+## Decomposition for Real Estate Loans -  
+```{r, echo=FALSE}
+#| output-location: slide
+
+real_estate_ts <- ts(filtered_real_estate_loans$value, frequency=52)
+real_estate_decomp <- decompose(real_estate_ts, "multiplicative")
+plot(real_estate_decomp)
+
+```
+
+## Decomposition for Mortgage rate - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+mortgage_rate_ts <- ts(filtered_mortgae_rate$value, frequency=52)
+mortgage_rate_decomp <- decompose(mortgage_rate_ts, "multiplicative")
+plot(mortgage_rate_decomp)
+
+```
+
+## Plotting both the series - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+min_max_scale <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+# Scale the data for each series
+real_estate_scaled <- filtered_real_estate_loans
+real_estate_scaled$value <- min_max_scale(filtered_real_estate_loans$value)
+
+mortgage_scaled <- filtered_mortgae_rate
+mortgage_scaled$value <- min_max_scale(filtered_mortgae_rate$value)
+
+# Merge data
+merged_data <- merge(real_estate_scaled, mortgage_scaled, by = "date", all = TRUE)
+
+# Plot series
+ggplot(merged_data, aes(x = date)) +
+  geom_line(aes(y = value.x, color = "Real Estate Loans")) +
+  geom_line(aes(y = value.y, color = "Mortgage Rate")) +
+  labs(title = "Weekly Series: Initial Jobless Claims vs Retail Sales",
+       x = "Date",
+       y = "Value") +
+  scale_color_manual(name = "Series", values = c("Real Estate Loans" = "blue", "Mortgage Rate" = "red")) +
+  theme_minimal()
+```
+
+## Checking for stationarity - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+# Function to check stationarity using ADF and KPSS tests
+check_stationarity <- function(data) {
+  adf_test <- adf.test(data)
+  kpss_test <- kpss.test(data)
+  
+  cat("ADF Test:\n")
+  print(adf_test)
+  cat("\nKPSS Test:\n")
+  print(kpss_test)
+}
+
+# Function to make the data stationary by differencing
+make_stationary <- function(data) {
+  diff_data <- diff(data)
+  return(diff_data)
+}
+
+# Assuming you have two dataframes: real_estate_data and mortgage_interest_data
+# Check stationarity for both series
+cat("Checking stationarity for Real Estate Loans: ")
+check_stationarity(filtered_real_estate_loans$value)
+```
+<br> </br>
+```{r, echo=FALSE}
+#| output-location: slide
+
+cat("Checking stationarity for Mortgage Rate: ")
+check_stationarity(filtered_mortgae_rate$value)
+```
+
+## Making data stationary:
+```{r, echo=FALSE}
+#| output-location: slide
+
+# Make the data stationary if necessary
+real_estate_data_diff <- make_stationary(filtered_real_estate_loans$value)
+mortgage_interest_data_diff <- make_stationary(filtered_mortgae_rate$value)
+
+
+# Create a dataframe for differenced real estate data
+real_estate_diff_df <- data.frame(date = filtered_real_estate_loans$date[-1], 
+                                  diff_value = real_estate_data_diff)
+
+# Create a dataframe for differenced mortgage interest data
+mortgage_interest_diff_df <- data.frame(date = filtered_mortgae_rate$date[-1], 
+                                        diff_value = mortgage_interest_data_diff)
+
+# Plot the differenced data to visually inspect stationarity
+ggplot() +
+  geom_line(aes(x = date, y = diff_value), data = real_estate_diff_df, color = "blue") +
+  geom_line(aes(x = date, y = diff_value), data = mortgage_interest_diff_df, color = "red") +
+  labs(title = "Differenced Data for Stationarity",
+       x = "Date",
+       y = "Differenced Value",
+       color = "Series") +
+  theme_minimal()
+
+```
+
+
+
+# Modeling
+## Overview - regARIMA model
+- To model the complex relationship between residential real estate loans and mortgage rates, we employ a Regression with ARIMA errors (RegARIMA) model. 
+- This approach allows for incorporating the average mortgage rate as an external regressor to predict the volume of real estate loans while accounting for auto-correlated residuals and non-stationarity inherent in time series data.
+
+## Mathematical framework
+
+The RegARIMA model integrates regression analysis with ARIMA modeling, specified as:
+
+$$
+y_t = \mathbf{X}_t \boldsymbol{\beta} + n_t
+$$
+
+where (y_t) is the observed time series at time (t), (\mathbf{X}\_t) represents external regressors, (\boldsymbol{\beta}) denotes the regression coefficients, and (n_t) is an error term following an ARIMA model:
+
+$$
+\Phi(B) \Delta^d n_t = \Theta(B) \epsilon_t
+$$
+
+Here, (\Delta\^d) is the differencing operator, (B) the backshift operator, (\Phi(B)) and (\Theta(B)) the AR and MA polynomial operators, and (\epsilon\_t) white noise.
+
+## Application in project
+- The goal is to analyze how the 30-Year Fixed Rate Mortgage Average impacts the volume of residential real estate loans.
+- To uncover the relationship between the volume of real estate loans and the average mortgage rate while accounting for autocorrelations within the residuals, we apply a RegARIMA modeling approach.
+- This section outlines the process from fitting a linear model to adjusting for ARIMA errors.
+
+## Summary of reg ARIMA model - 
+```{r}
+#| output-location: slide
+
+# Regression Component
+# Include covariate series as a regressor in the ARIMA model
+# Fit regression ARIMA model
+arima_model <- auto.arima(y = real_estate_diff_df$diff_value, xreg = mortgage_interest_diff_df$diff_value)
+print(summary(arima_model))
+```
+
+## Summary of reg ARIMA model - 
+```{r, echo=FALSE}
+cat("- MAE is 6.88, which tells us the average absolute difference between the observed and predicted values. Lower MAE indicates better prediiction accuracy.")
+cat("- MPE is negative, which tells us that the model is underestimating the predicted value than the actual value.")
+```
+
+## Model equation - 
+
+```{r, echo=FALSE}
+cat("Based on the provided coefficients, the regression ARIMA equation would be:")
+
+```
+
+$$
+y_t = 1.1346 - 0.2218 \cdot y_{t-1} - 0.2829 \cdot y_{t-2} - 0.1260 \cdot y_{t-3} + 0.2241 \cdot y_{t-4} + 0.2442 \cdot y_{t-5} + 0.1892 \cdot e_{t-1} + 4.7544 \cdot covariate + e_t
+$$
+
+
+## Model Diagnosis - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+# Diagnostic check of residuals
+checkresiduals(arima_model)
+```
+
+## Model Diagnosis - 
+```{r, echo=FALSE}
+cat("Residuals over time: ")
+cat("- Residuals fluctuate around the zero line, which is expected.")
+cat("- There are several spikes that stand out, suggesting potential outliers or model misspecification.")
+cat("- The variance of residuals appears constant over time, indicating no obvious signs of heteroscedasticity.")
+```
+<br> </br>
+```{r, echo=FALSE}
+cat("Autocorrelation Function (ACF) of Residuals: ")
+cat("- The ACF plot does not show significant autocorrelations for any lag, as most of the bars are within the blue dashed confidence interval lines.")
+cat("- This indicates that the residuals do not exhibit autocorrelation and the model is capturing the data's temporal structure well.")
+```
+<br> </br>
+```{r, echo=FALSE}
+cat("Histogram and Density of Residuals: ")
+cat("- The histogram shows the distribution of residuals with a superimposed red line representing the normal distribution.")
+cat("- Residuals are approximately normally distributed but show a slight leftward skew, suggesting a minor deviation from normality.")
+cat("- Despite the skew, the distribution of residuals does not show extreme deviations from the expected normal distribution.")
+```
+
+
+## Overview - VAR (Vector Autoregression) model
+- The Vector Autoregression (VAR) model is a type of time series model used for forecasting multiple time series variables simultaneously. 
+- It extends the univariate autoregressive model to handle multiple time series variables that may interact with each other over time.
+
+
+## Mathematical framework - 
+- VAR models are based on the assumption that each variable in the system is linearly dependent on its own lagged values as well as the lagged values of all other variables in the system.
+- Mathematically, a VAR(p) model of order p for k time series variables can be represented as:
+
+Where:
+
+Y<sub>t</sub> is a k-dimensional vector of endogenous variables at time t.
+C is a k-dimensional vector representing the intercept term.
+Φ<sub>1</sub>, Φ<sub>2</sub>, ..., Φ<sub>p</sub> are coefficient matrices of lagged values up to order p.
+U<sub>t</sub> is a k-dimensional vector of error terms at time t.
+
+## Summary of VAR moodel - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+combined_data_for_var <- merge(filtered_real_estate_loans, filtered_mortgae_rate, by = "date", all = TRUE)
+
+combined_data_for_var$date <- as.Date(combined_data_for_var$date)
+combined_data_for_var <- na.omit(combined_data_for_var)
+
+
+# Convert the combined data to a time series object
+ts_combined_data <- ts(combined_data_for_var[, c("value.x", "value.y")], start = as.Date("2004-06-02"), frequency = 52)
+
+# Create a VAR model
+var_model <- VAR(ts_combined_data[, c("value.x", "value.y")])
+cat("Summary of VAR model - ")
+print(summary(var_model))
+
+```
+
+## Model diagnostics:
+```{r, echo=FALSE}
+cat("Root of the Characteristic Polynomial:")
+cat("- The roots of the characteristic polynomial are provided. These roots are essential for understanding the stability of the model. In this case, the roots are 1.001 and 0.9943, indicating that the model is stable.")
+```
+<br> </br>
+
+```{r, echo=FALSE}
+cat("Residual Analysis:")
+cat("- Covariance matrix provides the covariance between residuals of each equation.")
+cat("- t helps in understanding the linear relationship between the residuals of different equations.")
+cat("- The RSE of 13.68 for house loans series means that, on average, the observed values of the endogenous variables deviate from the values predicted by the VAR model by approximately 13.68 units.")
+```
+
+
+
+
+
+# Forecasting
+## regARIMA model - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+arima_model <- auto.arima(y = filtered_real_estate_loans$value, xreg = filtered_mortgae_rate$value)
+reg_arima_forecast <- forecast(arima_model, xreg = filtered_mortgae_rate$value, h = 3)
+plot(reg_arima_forecast, main = "Forecast for Real Estate Loans")
+
+# Forecasting for the next week
+forecast_loans <- forecast(arima_model, xreg = tail(filtered_mortgae_rate$value, 1))
+regArima_forecast_value <- forecast_loans$mean[1]
+
+cat("\nForecasted value for the next week:", regArima_forecast_value)
+
+```
+
+## Cross-Validation - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+# 1. Prepare Data
+# Combine the two datasets by merging them based on the date column
+combined_data <- merge(filtered_real_estate_loans, filtered_mortgae_rate, by = "date", all = TRUE)
+
+# 2. Cross-Validation Setup
+num_folds <- 5  # Number of folds for cross-validation
+fold_size <- floor(nrow(combined_data) / num_folds)  # Size of each fold
+
+# Initialize vectors to store performance metrics for each time horizon
+rmse_values <- numeric(num_folds)
+mae_values <- numeric(num_folds)
+mape_values <- numeric(num_folds)
+
+# 3. Loop for Cross-Validation
+for (i in 1:num_folds) {
+  # Determine the indices for the test set
+  test_indices <- ((i - 1) * fold_size + 1):(i * fold_size)
+
+  # Determine the indices for the training set
+  train_indices <- setdiff(1:nrow(combined_data), test_indices)
+
+  # Split the combined data into training and test sets for this fold
+  train_data <- combined_data[train_indices, ]
+  test_data <- combined_data[test_indices, ]
+
+  # Fit the regARIMA model using the training data
+  arima_model <- auto.arima(y = train_data$value.x, xreg = train_data$value.y)
+
+  # Generate forecasts for multiple time horizons using the fitted model
+  forecast_result <- forecast(arima_model, xreg = test_data$value.y, h = 1)
+
+  # Evaluate forecast accuracy for each time horizon
+  accuracy_metrics <- accuracy(forecast_result)
+  rmse_values[i] <- accuracy_metrics[1, 2]
+  mape_values[i] <- accuracy_metrics[1, "MPE"]
+  mae_values[i] <- accuracy_metrics[1, "MAE"]
+}
+
+# 4. Aggregate Results
+mean_rmse <- mean(rmse_values)
+mean_mae <- mean(mae_values)
+mean_mape <- mean(mape_values)
+cat("- RMSE value after cross validatiion: ", mean_rmse)
+cat("- MAE value after cross validatiion: ", mean_mae)
+cat("- MAPE value after cross validatiion: ", mean_mape)
+
+# Forecasting for the next week
+forecast_loans <- forecast(arima_model, xreg = tail(filtered_mortgae_rate$value, 1))
+regArima_forecast_value <- forecast_loans$mean[1]
+
+cat("\nForecasted value for the next week:", regArima_forecast_value)
+cat("\n Forecasted value for regARIMA without cross validation has less error rate and thus final forecasted value for regARIMA model is: ", 2574.019)
+
+```
+
+## VAR model - 
+```{r, echo=FALSE}
+#| output-location: slide
+
+# Forecast for a specific number of steps ahead
+num_steps <- 52  # Adjust as needed
+var_forecast <- predict(var_model, n.ahead = num_steps)
+
+# Plot the forecasts
+plot(var_forecast)
+```
+
+```{r, echo=FALSE}
+#| output-location: slide
+# Forecast for next week (1 step ahead)
+next_week_forecast <- predict(var_model, n.ahead = 1)
+
+# Extract the forecasted values for the next week
+next_week_forecast_values <- next_week_forecast$fcst[1]$value.x[1]
+
+# Print the forecasted values for the next week
+cat("\nForecasted value for the next week:", next_week_forecast_values)
+
+```
+
+## Cross-Validation -
+```{r, echo=FALSE}
+#| output-location: slide
+
+# 1. Prepare Data
+# Combine the two datasets by merging them based on the date column
+combined_data_for_var_cv <- merge(filtered_real_estate_loans, filtered_mortgae_rate, by = "date", all = TRUE)
+combined_data_for_var_cv <- na.omit(combined_data_for_var_cv)
+
+
+# train_size <- 0.8
+# n_obs <- nrow(combined_data_for_var)
+# train_index <- 1:round(train_size * n_obs)
+# test_index <- (round(train_size * n_obs) + 1):n_obs
+
+# Define the number of folds for cross-validation
+k <- 5
+
+# Initialize a vector to store evaluation metrics
+RMSE_values <- numeric(k)
+MAE_values <- numeric(k)
+MAPE_values <- numeric(k)
+
+
+# Perform k-fold cross-validation
+for (i in 1:k) {
+  # Split data into training and testing sets for this fold
+  fold_train_index <- sample(1:nrow(combined_data_for_var_cv), size = round(0.8 * nrow(combined_data_for_var_cv)))
+  fold_test_index <- setdiff(1:nrow(combined_data_for_var_cv), fold_train_index)
+  
+  # Extract training and testing sets
+  train_data <- combined_data_for_var_cv[fold_train_index, ]
+  test_data <- combined_data_for_var_cv[fold_test_index, ]
+  
+  # Fit VAR model using training data
+  var_model_cv <- VAR(train_data[, c("value.x", "value.y")], p = 2)
+  
+  # Forecast using VAR model
+  var_forecast_cv <- predict(var_model_cv, n.ahead = nrow(test_data))
+  
+  # Evaluate the forecast using RMSE
+  RMSE_values[i] <- sqrt(mean((var_forecast_cv$fcst$value.x - test_data$value.x)^2))
+  
+  # Calculate MAE for this fold
+  MAE_values[i] <- mean(abs(var_forecast_cv$fcst$value.x - test_data$value.x))
+  
+  # Calculate MAPE for this fold
+  MAPE_values[i] <- mean(abs((var_forecast_cv$fcst$value.x - test_data$value.x) / test_data$value.x)) * 100
+}
+
+# Mean RMSE across all folds
+mean_RMSE_cv <- mean(RMSE_values)
+mean_MAE_cv <- mean(MAE_values)
+mean_MAPE_cv <- mean(MAPE_values)
+
+cat("RMSE value for VAR model using cross validation: ", mean_RMSE_cv)
+cat("MAE value for VAR model using cross validation: ", mean_MAE_cv)
+cat("MAPE value for VAR model using cross validation: ", mean_MAPE_cv)
+
+# Forecast for next week (1 step ahead)
+next_week_forecast_cv <- predict(var_model_cv, n.ahead = 1)
+
+# Extract the forecasted values for the next week
+next_week_forecast_values_cv <- next_week_forecast_cv$fcst[1]$value.x[1]
+
+# Print the forecasted values for the next week
+cat("\nForecasted value for the next week using cross validation:", next_week_forecast_values_cv)
+
+
+```
+
+# Comparison
+## Error rates and forecasted values - 
+```{r, echo=FALSE}
+cat("MAE value for regARIMA without cross-validation: 6.880539")
+cat("MAE value for regARIMA with cross-validation: 8.950738")
+cat("MAE for VAR without cross-validation: 13.68")
+cat("MAE for VAR with cross-validation: 683.4063")
+```
+<br> </br>
+
+```{r, echo=FALSE}
+cat("Forecasted value for regARIMA without cross-validation: 2574.019")
+cat("Forecasted value for regARIMA with cross-validation: 2293.682")
+cat("Forecasted for VAR without cross-validation: 2573.884")
+cat("Forecasted for VAR with cross-validation: 2102.099")
+```
+
+# Conclusion
+## Final forecasted value
+Final forecasted value is chosen from regARIMA model without cross-validation: 2574.019 
+
+
